@@ -104,37 +104,6 @@ RUN CFLAGS="" \
 RUN make -j1 install_sw install_ssldirs
 RUN mkdir -p ${INSTALL_DIR}/bref/ssl && curl -Lk -o ${CA_BUNDLE} ${CA_BUNDLE_SOURCE}
 
-
-###############################################################################
-# LIBSSH2
-# https://github.com/libssh2/libssh2/releases
-# Needs:
-#   - zlib
-#   - OpenSSL
-# Needed by:
-#   - curl
-ENV VERSION_LIBSSH2=1.10.0
-ENV LIBSSH2_BUILD_DIR=${BUILD_DIR}/libssh2
-RUN set -xe; \
-    mkdir -p ${LIBSSH2_BUILD_DIR}/bin; \
-    curl -Ls https://github.com/libssh2/libssh2/releases/download/libssh2-${VERSION_LIBSSH2}/libssh2-${VERSION_LIBSSH2}.tar.gz \
-  | tar xzC ${LIBSSH2_BUILD_DIR} --strip-components=1
-WORKDIR  ${LIBSSH2_BUILD_DIR}/bin/
-RUN CFLAGS="" \
-    CPPFLAGS="-I${INSTALL_DIR}/include  -I/usr/include" \
-    LDFLAGS="-L${INSTALL_DIR}/lib64 -L${INSTALL_DIR}/lib" \
-    cmake .. \
-        # Build as a shared library (.so) instead of a static one
-        -DBUILD_SHARED_LIBS=ON \
-        # Build with OpenSSL support
-        -DCRYPTO_BACKEND=OpenSSL \
-        # Build with zlib support
-        -DENABLE_ZLIB_COMPRESSION=ON \
-        -DCMAKE_INSTALL_PREFIX=${INSTALL_DIR} \
-        -DCMAKE_BUILD_TYPE=RELEASE
-RUN cmake  --build . --target install
-
-
 ###############################################################################
 # LIBNGHTTP2
 # This adds support for HTTP 2 requests in curl.
@@ -191,50 +160,14 @@ RUN ./buildconf \
     --disable-dependency-tracking \
     --with-zlib \
     --enable-http \
-    --enable-ftp  \
     --enable-file \
-    --enable-proxy  \
-    --enable-tftp \
     --enable-ipv6 \
     --enable-openssl-auto-load-config \
     --enable-cookies \
     --with-gnu-ld \
     --with-ssl \
-    --with-libssh2 \
     --with-nghttp2
 RUN make install
-
-
-###############################################################################
-# LIBXML2
-# https://github.com/GNOME/libxml2/releases
-# Uses:
-#   - zlib
-# Needed by:
-#   - php
-ENV VERSION_XML2=2.10.3
-ENV XML2_BUILD_DIR=${BUILD_DIR}/xml2
-RUN set -xe; \
-    mkdir -p ${XML2_BUILD_DIR}; \
-    curl -Ls https://download.gnome.org/sources/libxml2/${VERSION_XML2%.*}/libxml2-${VERSION_XML2}.tar.xz \
-  | tar xJC ${XML2_BUILD_DIR} --strip-components=1
-WORKDIR  ${XML2_BUILD_DIR}/
-RUN CFLAGS="" \
-    CPPFLAGS="-I${INSTALL_DIR}/include  -I/usr/include" \
-    LDFLAGS="-L${INSTALL_DIR}/lib64 -L${INSTALL_DIR}/lib" \
-    ./configure \
-    --prefix=${INSTALL_DIR} \
-    --with-sysroot=${INSTALL_DIR} \
-    --enable-shared \
-    --disable-static \
-    --with-html \
-    --with-history \
-    --enable-ipv6=no \
-    --with-icu \
-    --with-zlib \
-    --without-python
-RUN make install \
- && cp xml2-config ${INSTALL_DIR}/bin/xml2-config
 
 
 ###############################################################################
@@ -276,31 +209,6 @@ RUN CFLAGS="" \
     ./autogen.sh \
 && ./configure --prefix=${INSTALL_DIR}
 RUN make install
-
-
-###############################################################################
-# Postgres
-# https://github.com/postgres/postgres/releases
-# Needs:
-#   - OpenSSL
-# Needed by:
-#   - php
-ENV VERSION_POSTGRES=15.2
-ENV POSTGRES_BUILD_DIR=${BUILD_DIR}/postgres
-RUN set -xe; \
-    mkdir -p ${POSTGRES_BUILD_DIR}/bin; \
-    curl -Ls https://github.com/postgres/postgres/archive/REL_${VERSION_POSTGRES//./_}.tar.gz \
-    | tar xzC ${POSTGRES_BUILD_DIR} --strip-components=1
-WORKDIR  ${POSTGRES_BUILD_DIR}/
-RUN CFLAGS="" \
-    CPPFLAGS="-I${INSTALL_DIR}/include  -I/usr/include" \
-    LDFLAGS="-L${INSTALL_DIR}/lib64 -L${INSTALL_DIR}/lib" \
-    ./configure --prefix=${INSTALL_DIR} --with-openssl --without-readline
-RUN cd ${POSTGRES_BUILD_DIR}/src/interfaces/libpq && make && make install
-RUN cd ${POSTGRES_BUILD_DIR}/src/bin/pg_config && make && make install
-RUN cd ${POSTGRES_BUILD_DIR}/src/backend && make generated-headers
-RUN cd ${POSTGRES_BUILD_DIR}/src/include && make install
-
 
 ###############################################################################
 # Oniguruma
@@ -385,7 +293,6 @@ RUN CFLAGS="-fstack-protector-strong -fpic -fpie -O3 -I${INSTALL_DIR}/include -I
         --with-zlib-dir \
         --with-curl \
         --enable-exif \
-        --enable-ftp \
         --with-gettext \
         --enable-mbstring \
         --with-pdo-mysql=shared,mysqlnd \
@@ -393,9 +300,7 @@ RUN CFLAGS="-fstack-protector-strong -fpic -fpie -O3 -I${INSTALL_DIR}/include -I
         --enable-pcntl \
         --with-zip \
         --enable-bcmath \
-        --with-pdo-pgsql=shared,${INSTALL_DIR} \
         --enable-intl=shared \
-        --enable-soap \
         --with-xsl=${INSTALL_DIR} \
         # necessary for `pecl` to work (to install PHP extensions)
         --with-pear
@@ -411,7 +316,7 @@ RUN set -xe; \
 # Install extensions
 # We can install extensions manually or using `pecl`
 RUN pecl install APCu
-
+RUN pecl install --force redis
 
 # ---------------------------------------------------------------
 # Now we copy everything we need for the layers into /bref-layer (which will be used for the real /opt later)
@@ -419,6 +324,8 @@ RUN mkdir -p /bref-layer/bin \
 &&  mkdir -p /bref-layer/lib \
 &&  mkdir -p /bref-layer/bref/extensions \
 &&  mkdir -p /bref-layer/bref/ssl
+
+RUN curl -o /bref-layer/bref/extensions/blackfire.so -L -s "https://packages.blackfire.io/binaries/blackfire-php/1.86.1/blackfire-php-linux_arm64-php-81.so"
 
 # Copy the PHP binary
 RUN cp ${INSTALL_DIR}/bin/php /bref-layer/bin/php && chmod +x /bref-layer/bin/php
@@ -437,6 +344,7 @@ RUN php /bref/lib-copy/copy-dependencies.php /bref-layer/bref/extensions/intl.so
 RUN php /bref/lib-copy/copy-dependencies.php /bref-layer/bref/extensions/opcache.so /bref-layer/lib
 RUN php /bref/lib-copy/copy-dependencies.php /bref-layer/bref/extensions/pdo_mysql.so /bref-layer/lib
 RUN php /bref/lib-copy/copy-dependencies.php /bref-layer/bref/extensions/pdo_pgsql.so /bref-layer/lib
+RUN php /bref/lib-copy/copy-dependencies.php /bref-layer/bref/extensions/redis.so /bref-layer/lib
 
 # Copy the OpenSSL certificates file
 RUN cp ${CA_BUNDLE} /bref-layer/bref/ssl/cert.pem
